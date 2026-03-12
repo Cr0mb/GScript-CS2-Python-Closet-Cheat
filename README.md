@@ -1,22 +1,8 @@
+<img width="1600" height="900" alt="image" src="https://github.com/user-attachments/assets/ebb3f237-6b6b-4c07-847d-ceb908f579ce" />
+
 # GScript
 
 > Free, open-source Counter-Strike 2 external cheat with user-mode memory access.
-
-[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey.svg)]()
-[![License](https://img.shields.io/badge/License-MIT-green.svg)]()
-[![Game](https://img.shields.io/badge/Game-CS2-orange.svg)]()
-
----
-
-## Disclaimer
-
-**This software is for EDUCATIONAL PURPOSES ONLY.** 
-
-- Use at your own risk
-- The authors are not responsible for any bans or consequences
-- Do not use on FaceIT, ESEA, or other competitive platforms
-- This is an external overlay - does not inject into game process
 
 ---
 
@@ -123,30 +109,6 @@
 
 ---
 
-## Project Structure
-
-```
-GScript/
-├── GScript.py                 # Main entry point
-├── Loader.py                  # License/loader UI
-├── vischeck.pyd               # Compiled visibility check module
-├── Features/
-│   ├── aimbot.py              # Aimbot (RCS) feature
-│   ├── bhop.py                # Bunny hop feature
-│   ├── esp.py                 # ESP/wallhack feature
-│   ├── radar.py               # 2D radar feature
-│   └── triggerbot.py          # Triggerbot feature
-├── Process/
-│   ├── config.py              # Configuration settings
-│   ├── helpers.py             # Memory reading, overlay, process utilities
-│   ├── offset_manager.py      # Offset scanning and management
-│   ├── offsets.py             # Game offset definitions
-│   └── qt_overlay.py          # PyQt5 overlay rendering
-└── logs/                      # Runtime logs (created at runtime)
-```
-
----
-
 ## Configuration
 
 Configs are stored in `config/` directory as JSON files.
@@ -186,76 +148,4 @@ Config location: `%APPDATA%\GScript\gscript_config.json`
 
 ## Safety
 
-### Why User-Mode?
-- **Lower detection risk** - No kernel driver signature
-- **No admin required** - Runs with standard permissions
-- **Simpler setup** - No driver installation
-- **Portable** - Works on any Windows 10/11 system
-
-### Detection Risk
-| Feature | Risk Level |
-|---------|------------|
-| User-mode memory read | Low |
-| External overlay | Low |
-| Offset scanning | Low |
-| **Overall** | **Low-Medium** |
-
 > No cheat is 100% undetected. Use responsibly.
-
----
-
-## Development
-
-### Building from Source
-
-No build process required - runs directly from Python source.
-
-### Adding Features
-
-1. Create new feature in `Features/` directory
-2. Import in `GScript.py` `_lazy_import_features()`
-3. Add menu options in `TABS` list
-4. Add config options in `Process/config.py`
-
-### Code Style
-- Python 3.10+ syntax
-- Type hints where applicable
-- Minimal comments (self-documenting code)
-- No kernel drivers
-
----
-
-## License
-
-This project is provided as-is for educational purposes.
-
----
-
-## Credits
-
-- **Developer:** Cr0mb
-- **Inspired by:** Various open-source CS2 projects
-- **Special thanks:** UnknownCheats community
-
----
-
-## Support
-
-- **GitHub Issues:** For bug reports and feature requests
-- **UnknownCheats:** Release thread for discussion
-
----
-
-## Star History
-
-If you find this project useful, please consider giving it a star!
-
----
-
-<div align="center">
-
-**Made by [Cr0mb](https://github.com/Cr0mb)**
-
-*Use responsibly. Don't ruin the game for others.*
-
-</div>
