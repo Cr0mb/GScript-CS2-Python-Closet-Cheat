@@ -1,5 +1,7 @@
 <img width="1600" height="900" alt="image" src="https://github.com/user-attachments/assets/ebb3f237-6b6b-4c07-847d-ceb908f579ce" />
 
+// i used qwen coder in termius ssh vps to quickly upload map files.
+
 # GScript
 
 > Free, open-source Counter-Strike 2 external cheat with user-mode memory access.
