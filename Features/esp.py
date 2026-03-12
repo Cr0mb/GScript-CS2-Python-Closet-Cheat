@@ -795,17 +795,14 @@ def draw_spectator_list(overlay, spectators):
 
 def _get_gscript_maps_dir() -> str:
     """
-    Returns the absolute path to %APPDATA%\\GScript\\maps on Windows.
-    Falls back to ~/.config/GScript/maps on non-Windows (just in case).
+    Returns the absolute path to the maps directory located next to GScript.py.
+    Maps are stored in GScript/maps/ subdirectory.
     """
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        base = os.path.join(appdata, "GScript")
-    else:
-        # Fallback (non-Windows / odd env)
-        base = os.path.join(os.path.expanduser("~"), ".config", "GScript")
-
-    maps_dir = os.path.join(base, "maps")
+    # Get the directory where GScript.py is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Navigate up to project root (from Features/ to GScript/)
+    project_root = os.path.dirname(script_dir)
+    maps_dir = os.path.join(project_root, "maps")
     os.makedirs(maps_dir, exist_ok=True)
     return maps_dir
 
