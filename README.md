@@ -5,6 +5,22 @@
 
 > Free, open-source Counter-Strike 2 external cheat with user-mode memory access.
 
+
+## Changelog
+
+```
+v1.1
+  - Process/offset_manager.py: load offsets from dumper JSON, fall back to sig scan
+  - Fixed sigs: dwGameRules, dwNetworkGameClient_clientTickCount; added soundsystem.dll patterns
+  - Fixed schema field-descriptor layout (fieldCount 0x1C→0x24, fieldsPtr 0x28→0x30)
+  - Removed bad overrides that clobbered correct values (dwViewAngles, dwLocalPlayerPawn)
+  - Canonical-class override pass fixes collisions (m_fFlags, m_AttributeManager, etc.)
+  - Rewired RCS: aim-punch now read through m_pAimPunchServices → m_predictableBaseAngle
+  - read_weapon_id falls back to m_pWeaponServices → m_hActiveWeapon when m_pClippingWeapon is missing
+  - Remapped bone indices (head 6→7, new spine/shoulder/elbow/hip/knee/foot entries)
+  - Safe defaults for retired fields (m_aimPunchAngle, m_pClippingWeapon) so features no longer crash
+  ```
+
 ---
 
 ## Features
