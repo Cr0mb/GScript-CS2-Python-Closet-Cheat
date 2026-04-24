@@ -165,14 +165,14 @@ class ProcessReader:
 class SignatureScanner:
     """Signature scanning for CS2 offsets"""
 
-    # Offset patterns from a2x/cs2-dumper
+    # Offset patterns mirror cs2-dumper-main/src/analysis/offsets.rs (build 14154).
     OFFSET_PATTERNS = {
         'client.dll': {
             'dwCSGOInput': '488905${\'} 0f57c0 0f1105',
             'dwEntityList': '48890d${\'} e9${} cc',
             'dwGameEntitySystem': '488b1d${\'} 48891d[4] 4c63b3',
             'dwGameEntitySystem_highestEntityIndex': 'ff81u4 4885d2',
-            'dwGameRules': '48891d${\'} ff15${} 84c0',
+            'dwGameRules': 'f6c1010f85${} 4c8b05${\'} 4d85',
             'dwGlobalVars': '488915${\'} 488942',
             'dwGlowManager': '488b05${\'} c3 cccccccccccccccc 8b41',
             'dwLocalPlayerController': '488b05${\'} 4189be',
@@ -187,7 +187,7 @@ class SignatureScanner:
         'engine2.dll': {
             'dwBuildNumber': '8905${\'} 488d0d${} ff15${} 488b0d',
             'dwNetworkGameClient': '48893d${\'} ff87',
-            'dwNetworkGameClient_clientTickCount': '8b81u4 c3 cccccccccccccccccc 8b81${} c3 cccccccccccccccc 83b9',
+            'dwNetworkGameClient_clientTickCount': '8b81u4 c3 cccccccccccccccccc 8b81${} c3 cccccccccccccccccc 83b9',
             'dwNetworkGameClient_deltaTick': '4c8db7u4 4c897c24',
             'dwNetworkGameClient_isBackgroundMap': '0fb681u4 c3 cccccccccccccccc 0fb681${} c3 cccccccccccccccc 4053',
             'dwNetworkGameClient_localPlayer': '428b94d3u4 5b 49ffe3 32c0 5b c3 cccccccccccccccc 4053',
@@ -202,6 +202,10 @@ class SignatureScanner:
         },
         'matchmaking.dll': {
             'dwGameTypes': '488d0d${\'} ff90',
+        },
+        'soundsystem.dll': {
+            'dwSoundSystem': '488d05${\'} c3 cccccccccccccccc 488915',
+            'dwSoundSystem_engineViewData': '0f1147u1 0f104e? 0f118f',
         },
     }
 
@@ -412,9 +416,11 @@ class SchemaScanner:
     def _read_class_info(self, class_ptr: int) -> Optional[Tuple[str, Dict[str, int]]]:
         """Read class name and fields"""
         name_ptr = self.process.read_ptr(class_ptr + 8)
-        field_count_data = self.process.read_memory(class_ptr + 28, 2)
+        # AG2 Update: fieldCount moved from 28 to 36 (0x24)
+        field_count_data = self.process.read_memory(class_ptr + 36, 2)
         field_count = struct.unpack('<H', field_count_data)[0] if field_count_data else 0
-        fields_ptr = self.process.read_ptr(class_ptr + 40)
+        # AG2 Update: fieldsPtr moved from 40 to 48 (0x30)
+        fields_ptr = self.process.read_ptr(class_ptr + 48)
 
         if not name_ptr:
             return None
@@ -435,6 +441,8 @@ class SchemaScanner:
                     field_name = self.process.read_string(field_name_ptr, 128)
                     if field_name:
                         # Handle special case for m_modelState -> m_pBoneArray
+                        # AG2 Update: Internal offset in m_modelState changed from 128 (0x80) to 128 or 336 (0x150)
+                        # Most community AG2 dumpers use 0x80 relative to m_modelState, but m_modelState offset itself shifted to 0x150.
                         if field_name == 'm_modelState' and name == 'CSkeletonInstance':
                             fields['m_pBoneArray'] = offset + 128
                         else:
@@ -448,12 +456,99 @@ _class_offsets_cache: SimpleNamespace = None
 
 
 def get_offsets(force_update: bool = False) -> Tuple[SimpleNamespace, SimpleNamespace]:
-    """Get offsets via signature scanning from cs2.exe memory"""
+    """Get offsets via local JSON files (from a2x dumper) or signature scanning."""
     global _offsets_cache, _class_offsets_cache
 
     if _offsets_cache and _class_offsets_cache and not force_update:
         return (_offsets_cache, _class_offsets_cache)
 
+    # Try to load from local dumper output first
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    dumper_out = os.path.join(project_root, "cs2-dumper-main", "output")
+    offsets_file = os.path.join(dumper_out, "offsets.json")
+    client_file = os.path.join(dumper_out, "client_dll.json")
+
+    if os.path.exists(offsets_file) and os.path.exists(client_file):
+        try:
+            import json
+            with open(offsets_file, 'r') as f:
+                off_data = json.load(f)
+            with open(client_file, 'r') as f:
+                client_data = json.load(f)
+
+            flat = {}
+            # Flatten global offsets
+            for module_name, module_offsets in off_data.items():
+                for name, val in module_offsets.items():
+                    flat[name] = val
+
+            # Flatten schema classes
+            class_ns = {}
+            if "client.dll" in client_data:
+                classes = client_data["client.dll"]["classes"]
+                for cls_name, cls_info in classes.items():
+                    fields = cls_info.get("fields", {})
+                    class_ns[cls_name] = SimpleNamespace(**fields)
+                    for f_name, f_off in fields.items():
+                        # Don't overwrite global offsets if they exist
+                        if f_name not in flat:
+                            flat[f_name] = f_off
+
+            # The flatten above is order-dependent, so names like m_fFlags or
+            # m_AttributeManager can end up picking the wrong class. Force the
+            # canonical classes to win by applying them last.
+            CANONICAL_OWNERS = {
+                "C_BaseEntity": ("m_fFlags", "m_iHealth", "m_iTeamNum", "m_lifeState",
+                                 "m_vecVelocity", "m_pGameSceneNode"),
+                "C_BasePlayerPawn": ("m_vOldOrigin", "m_pWeaponServices",
+                                     "m_pObserverServices"),
+                "C_CSPlayerPawnBase": ("m_flFlashDuration",),
+                "C_CSPlayerPawn": ("m_bIsScoped", "m_angEyeAngles", "m_iShotsFired",
+                                   "m_iIDEntIndex"),
+                "CBasePlayerController": ("m_hPawn", "m_iszPlayerName"),
+                "CCSPlayerController": ("m_hPlayerPawn", "m_pInGameMoneyServices"),
+                "C_EconEntity": ("m_AttributeManager",),
+                "C_EconItemView": ("m_iItemDefinitionIndex",),
+                "C_AttributeContainer": ("m_Item",),
+                "CSkeletonInstance": ("m_modelState",),
+                "CGameSceneNode": ("m_bDormant",),
+                "CPlayer_WeaponServices": ("m_hActiveWeapon",),
+                "CPlayer_ObserverServices": ("m_hObserverTarget",),
+                "CCSPlayerController_InGameMoneyServices": ("m_iAccount",),
+            }
+            for cls_name, field_names in CANONICAL_OWNERS.items():
+                cls = class_ns.get(cls_name)
+                if not cls:
+                    continue
+                for f_name in field_names:
+                    if hasattr(cls, f_name):
+                        flat[f_name] = getattr(cls, f_name)
+
+            # m_pBoneArray lives inside m_modelState at +0x80 (standard CS2 layout).
+            if "CSkeletonInstance" in class_ns and hasattr(class_ns["CSkeletonInstance"], "m_modelState"):
+                m_modelState = class_ns["CSkeletonInstance"].m_modelState
+                flat["m_pBoneArray"] = m_modelState + 0x80
+
+            # dwViewAngles / dwLocalPlayerPawn: the dumper emits these into
+            # offsets.json directly; only synthesize if missing.
+            if "dwViewAngles" not in flat and "dwCSGOInput" in flat:
+                flat["dwViewAngles"] = flat["dwCSGOInput"] + 0x688
+            if "dwLocalPlayerPawn" not in flat and "dwPrediction" in flat:
+                flat["dwLocalPlayerPawn"] = flat["dwPrediction"] + 0xF0
+
+            # m_aimPunchAngle / m_pClippingWeapon aren't in the 14154 schema dump.
+            # Expose them as 0 so feature code can detect the missing-offset case
+            # via `getattr(..., 0)` rather than crashing on AttributeError.
+            flat.setdefault("m_aimPunchAngle", 0)
+            flat.setdefault("m_pClippingWeapon", 0)
+
+            _offsets_cache = SimpleNamespace(**flat)
+            _class_offsets_cache = SimpleNamespace(**class_ns)
+            return (_offsets_cache, _class_offsets_cache)
+        except Exception as e:
+            logger.error(f"Failed to load offsets from JSON: {e}")
+
+    # Fallback to signature scanning if JSON not found or failed
     process = ProcessReader("cs2.exe")
     if not process.open():
         raise RuntimeError("Failed to open cs2.exe - make sure the game is running")
@@ -487,7 +582,7 @@ def get_offsets(force_update: bool = False) -> Tuple[SimpleNamespace, SimpleName
         # These patterns extract u4 values that are added to parent RVA
         if 'client.dll' in process.modules:
             module = process.modules['client.dll']
-            read_size = min(module.size, 100 * 1024 * 1024)
+            read_size = min(module.size, 120 * 1024 * 1024)
             client_data = process.read_memory(module.base, read_size)
             if client_data:
                 # dwViewAngles: pattern "f2420f108428u4"
@@ -499,7 +594,9 @@ def get_offsets(force_update: bool = False) -> Tuple[SimpleNamespace, SimpleName
                         pos = va_matches[0] + 6  # after f2 42 0f 10 84 28
                         if pos + 4 <= len(client_data):
                             offset_val = struct.unpack('<I', client_data[pos:pos+4])[0]
+                            # Verified: It is added to the pointer address, not the pointer's VALUE.
                             flat['dwViewAngles'] = flat['dwCSGOInput'] + offset_val
+                            logger.info(f"Found dwViewAngles via pattern at {hex(flat['dwViewAngles'])}")
 
                 # dwLocalPlayerPawn: pattern "4c39b6u4 74? 4488be"
                 # Result = dwPrediction_rva + extracted_u4_value
@@ -511,6 +608,7 @@ def get_offsets(force_update: bool = False) -> Tuple[SimpleNamespace, SimpleName
                         if pos + 4 <= len(client_data):
                             offset_val = struct.unpack('<I', client_data[pos:pos+4])[0]
                             flat['dwLocalPlayerPawn'] = flat['dwPrediction'] + offset_val
+                            logger.info(f"Found dwLocalPlayerPawn via pattern at {hex(flat['dwLocalPlayerPawn'])}")
 
         # Ensure both dwLocalPlayerController and dwLocalPlayerPawn exist
         if 'dwLocalPlayerController' not in flat and 'dwLocalPlayerPawn' in flat:
@@ -529,6 +627,10 @@ def get_offsets(force_update: bool = False) -> Tuple[SimpleNamespace, SimpleName
             # Also add fields to flat namespace for direct access
             for field_name, offset in fields.items():
                 flat[field_name] = offset
+
+        # Fallback defaults for schema fields the 14154 dump no longer exposes.
+        flat.setdefault("m_aimPunchAngle", 0)
+        flat.setdefault("m_pClippingWeapon", 0)
 
         _offsets_cache = SimpleNamespace(**flat)
         _class_offsets_cache = SimpleNamespace(**class_ns)

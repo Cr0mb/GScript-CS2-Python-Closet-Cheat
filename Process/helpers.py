@@ -548,8 +548,33 @@ def ensure_offsets_loaded():
     from Process.offset_manager import get_offsets as _get_offsets
     Offsets, _ClassOffsets = _get_offsets(force_update=False)
     return (Offsets, _ClassOffsets)
-BONE_POSITIONS = {'head': 6, 'chest': 15, 'left_hand': 10, 'right_hand': 2, 'left_leg': 23, 'right_leg': 26}
-BONE_CONNECTIONS = [(0, 2), (2, 4), (4, 5), (5, 6), (4, 8), (8, 9), (9, 10), (4, 13), (13, 14), (14, 15), (0, 22), (22, 23), (23, 24), (0, 25), (25, 26), (26, 27)]
+BONE_POSITIONS = {
+    'head': 7,
+    'neck': 6,
+    'spine_2': 4,
+    'spine_1': 3,
+    'spine_0': 2,
+    'pelvis': 1,
+    'left_shoulder': 9,
+    'left_elbow': 10,
+    'left_hand': 11,
+    'right_shoulder': 13,
+    'right_elbow': 14,
+    'right_hand': 15,
+    'left_hip': 17,
+    'left_knee': 18,
+    'left_foot': 19,
+    'right_hip': 20,
+    'right_knee': 21,
+    'right_foot': 22
+}
+BONE_CONNECTIONS = [
+    (7, 6), (6, 4), (4, 3), (3, 2), (2, 1),  # Spine
+    (4, 9), (9, 10), (10, 11),              # Left Arm
+    (4, 13), (13, 14), (14, 15),            # Right Arm
+    (1, 17), (17, 18), (18, 19),            # Left Leg
+    (1, 20), (20, 21), (21, 22)             # Right Leg
+]
 
 class _ConfigFlagsProxy:
 

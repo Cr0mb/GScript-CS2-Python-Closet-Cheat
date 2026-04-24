@@ -19,8 +19,19 @@ except Exception:
     ESP_VISCHECK_AVAILABLE = False
     check_player_visibility = None
     auto_map_loader = None
-BONES = {'head': 6, 'neck': 5, 'chest': 2, 'stomach': 15, 'pelvis': 0, 'right_hand': 10, 'left_hand': 13, 'right_leg': 26, 'left_leg': 23}
-DEFAULT_AIM_BONES = (BONES['head'], BONES['neck'], BONES['chest'], BONES['pelvis'], BONES['left_hand'], BONES['right_hand'], BONES['left_leg'], BONES['right_leg'])
+BONES = {
+    'head': 7,
+    'neck': 6,
+    'spine_2': 4,
+    'spine_1': 3,
+    'spine_0': 2,
+    'pelvis': 1,
+    'right_hand': 15,
+    'left_hand': 11,
+    'right_leg': 22,
+    'left_leg': 19
+}
+DEFAULT_AIM_BONES = (BONES['head'], BONES['neck'], BONES['spine_2'], BONES['pelvis'], BONES['left_hand'], BONES['right_hand'], BONES['left_leg'], BONES['right_leg'])
 
 class AimbotRCS:
     MAX_DELTA_ANGLE = 60
@@ -132,7 +143,26 @@ class AimbotRCS:
         return self.reader.read_vec3(bones + idx * 32)
 
     def read_weapon_id(self, pawn):
-        w = self.read(pawn + self.o.m_pClippingWeapon, 'long')
+        clip_off = getattr(self.o, 'm_pClippingWeapon', 0)
+        if clip_off:
+            w = self.read(pawn + clip_off, 'long')
+        else:
+            # Newer CS2 builds removed m_pClippingWeapon; walk
+            # m_pWeaponServices -> m_hActiveWeapon -> entity list instead.
+            ws = self.read(pawn + self.o.m_pWeaponServices, 'long')
+            if not ws:
+                return 0
+            handle = self.read(ws + self.o.m_hActiveWeapon, 'int') or 0
+            handle &= 0x7FFF
+            if not handle or handle == 0x7FFF:
+                return 0
+            ent_list = self.read(self.base + self.o.dwEntityList, 'long')
+            if not ent_list:
+                return 0
+            list_entry = self.read(ent_list + 8 * (handle >> 9) + 16, 'long')
+            if not list_entry:
+                return 0
+            w = self.read(list_entry + 112 * (handle & 0x1FF), 'long')
         if not w:
             return 0
         return self.read(w + self.o.m_AttributeManager + self.o.m_Item + self.o.m_iItemDefinitionIndex, 'ushort')
@@ -212,7 +242,7 @@ class AimbotRCS:
 
     def get_current_bone_index(self, pawn, my_pos, pitch, yaw, frame_time=1.0 / 60.0):
         if not pawn or not my_pos:
-            return self.bone_indices.get('head', 6)
+            return self.bone_indices.get('head', 7)
         if not bool(getattr(self.cfg, 'closest_to_crosshair', False)):
             name = str(getattr(self.cfg, 'target_bone_name', 'head')).lower().strip()
             if name in self.bone_indices:
@@ -222,11 +252,11 @@ class AimbotRCS:
                 first = str(bone_names[0]).lower().strip()
                 if first in self.bone_indices:
                     return self.bone_indices[first]
-            return self.bone_indices.get('head', 6)
+            return self.bone_indices.get('head', 7)
         bone_names = getattr(self.cfg, 'aim_bones', ['head'])
         bone_ids = [self.bone_indices[b] for b in bone_names if b in self.bone_indices]
         if not bone_ids:
-            return self.bone_indices.get('head', 6)
+            return self.bone_indices.get('head', 7)
         best_bone = None
         best_delta = float('inf')
         vel = self.read_vec3(pawn + self.o.m_vecVelocity) if getattr(self.cfg, 'enable_velocity_prediction', False) else None
@@ -307,11 +337,14 @@ class AimbotRCS:
             # Any failure in the vischecker should not hard-disable the aimbot.
             return True
     def run(self):
+        print("[Aimbot] Thread started.")
         from ctypes import windll
         GetAsyncKeyState = windll.user32.GetAsyncKeyState
         o, base, cfg = (self.o, self.base, self.cfg)
         last_aim_key = None
         aim_vk = None
+        
+        # ... (rest of vars)
         fps = int(getattr(cfg, 'aim_tick_rate', 60))
         frame_time = 1.0 / max(30, min(240, fps))
         cache_rate = float(getattr(cfg, 'entity_cache_refresh', 0.2))
@@ -340,6 +373,8 @@ class AimbotRCS:
             if getattr(cfg, 'DeathMatch', False) or shoot_mates:
                 return True
             return t != team
+
+        print(f"[Aimbot] Entering main loop. Config Enabled: {cfg.enabled}")
         while not cfg.aim_stop:
             t0 = time.perf_counter()
             dx = dy = 0
@@ -354,44 +389,80 @@ class AimbotRCS:
                 if cur_aim_key != last_aim_key:
                     last_aim_key = cur_aim_key
                     aim_vk = get_vk_code(cur_aim_key) or get_vk_code('mouse5')
-                if aim_vk is None or not self.is_cs2_focused():
-                    time.sleep(0.1)
+                    print(f"[Aimbot] Aim Key updated: {cur_aim_key} (VK: {aim_vk})")
+                
+                focused = self.is_cs2_focused()
+                if aim_vk is None or not focused:
+                    if int(time.time()) % 10 == 0:
+                        print(f"[Aimbot] Idle - Focused: {focused}, Key: {aim_vk}")
+                    time.sleep(0.5)
                     continue
+                
                 if getattr(cfg, 'menu_open', False):
                     self.left_down = False
-                    time.sleep(0.05)
+                    time.sleep(0.1)
                     continue
+                
                 state = GetAsyncKeyState(aim_vk) & 32768 != 0
                 if state != self.left_down:
+                    print(f"[Aimbot] Key State Change: {state}")
                     self.aim_start_time = time.perf_counter() if state else None
                     self.reset_recoil()
                     self.smooth_ramp = 0.0
                 self.left_down = state
+                
                 if not (cfg.enabled and getattr(cfg, 'aimbot_enabled', True)):
+                    if int(time.time()) % 10 == 0:
+                        print(f"[Aimbot] Feature Disabled in Config")
                     self.left_down = False
-                    time.sleep(0.05)
+                    time.sleep(0.5)
                     continue
                 if not self.left_down:
                     time.sleep(0.01)
                     continue
+                
                 pawn = self.read(base + o.dwLocalPlayerPawn, 'long')
                 if not pawn:
+                    if int(time.time() * 2) % 10 == 0:
+                        print(f"[Aimbot] Failed to read LocalPlayerPawn at {hex(base + o.dwLocalPlayerPawn)}")
                     time.sleep(0.01)
                     continue
+                
                 hp = self.read(pawn + o.m_iHealth)
-                if not hp or hp <= 0:
+                my_team = self.read(pawn + o.m_iTeamNum)
+                
+                if hp <= 0:
+                    if int(time.time() * 2) % 10 == 0:
+                        print(f"[Aimbot] LocalPlayer HP is {hp}")
                     time.sleep(0.01)
                     continue
-                ctrl = self.read(base + o.dwLocalPlayerController, 'long')
-                my_team = self.read(pawn + o.m_iTeamNum)
+
                 my_pos = self.read_vec3(pawn + o.m_vOldOrigin)
+                
+                # Using the now-corrected global dwViewAngles offset
                 view = self.reader.read_bytes(base + o.dwViewAngles, 8)
                 pitch, yaw = struct.unpack('ff', view) if view else (0.0, 0.0)
-                punch_bytes = self.reader.read_bytes(pawn + o.m_aimPunchAngle, 8)
-                if punch_bytes and len(punch_bytes) >= 8:
-                    rp, ry = struct.unpack('ff', punch_bytes)
+                
+                if int(time.time() * 4) % 10 == 0:
+                    print(f"[AimDebug] Pawn: {hex(pawn)}, HP: {hp}, Team: {my_team}")
+                    print(f"[AimDebug] Pos: {my_pos}, View: {pitch:.2f}, {yaw:.2f}")
+
+                rp = ry = 0.0
+                punch_off = getattr(o, 'm_aimPunchAngle', 0)
+                if punch_off:
+                    punch_bytes = self.reader.read_bytes(pawn + punch_off, 8)
+                    if punch_bytes and len(punch_bytes) >= 8:
+                        rp, ry = struct.unpack('ff', punch_bytes)
                 else:
-                    rp = ry = 0.0
+                    # Build 14154+: aim-punch moved behind m_pAimPunchServices.
+                    svc_off = getattr(o, 'm_pAimPunchServices', 0)
+                    base_angle_off = getattr(o, 'm_predictableBaseAngle', 0x50)
+                    if svc_off:
+                        svc = self.read(pawn + svc_off, 'long')
+                        if svc:
+                            punch_bytes = self.reader.read_bytes(svc + base_angle_off, 8)
+                            if punch_bytes and len(punch_bytes) >= 8:
+                                rp, ry = struct.unpack('ff', punch_bytes)
                 now = time.time()
                 if now - last_cache > cache_rate:
                     last_cache = now
@@ -410,12 +481,25 @@ class AimbotRCS:
                 if not entity_cache:
                     time.sleep(0.01)
                     continue
+                # DEBUG LOGGING
+                target_count = len(entity_cache)
+                if self.left_down:
+                    # Only log occasionally to avoid spam
+                    if int(time.time() * 2) % 10 == 0:
+                        print(f"[AimDebug] LocalPawn: {hex(pawn)}, Team: {my_team}, HP: {hp}")
+                        print(f"[AimDebug] ViewAngles: {pitch:.2f}, {yaw:.2f}, MyPos: {my_pos}")
+                        print(f"[AimDebug] Entities in cache: {target_count}")
+
                 target = pos = None
                 if self.target_key in entity_cache:
                     ent = entity_cache[self.target_key]
                     tpawn = getattr(ent, 'pawn', self.target_key)
                     b = self.get_current_bone_index(tpawn, my_pos, pitch, yaw, frame_time)
                     p = self.read_bone_pos(tpawn, b) or self.read_vec3(tpawn + o.m_vOldOrigin)
+                    
+                    if self.left_down and int(time.time() * 2) % 10 == 0:
+                        print(f"[AimDebug] Sticky Target: {hex(tpawn)}, Bone: {b}, Pos: {p}")
+
                     v = self.read_vec3(tpawn + self.o.m_vecVelocity) if enable_vel_pred else [0, 0, 0]
                     pred = [p[i] + v[i] * frame_time * vel_factor for i in range(3)]
                     pred[2] -= downward_offset
@@ -427,6 +511,7 @@ class AimbotRCS:
                         self.target_key = None
                     else:
                         target, pos = (tpawn, pred)
+                
                 if not target:
                     mind = float('inf')
                     for pawn_addr, ent in entity_cache.items():
@@ -435,6 +520,10 @@ class AimbotRCS:
                             continue
                         b = self.get_current_bone_index(p, my_pos, pitch, yaw, frame_time)
                         pp = self.read_bone_pos(p, b) or self.read_vec3(p + o.m_vOldOrigin)
+                        
+                        if self.left_down and int(time.time() * 2) % 10 == 0:
+                            pass # Too much spam to log every ent
+
                         v = self.read_vec3(p + self.o.m_vecVelocity) if enable_vel_pred else [0, 0, 0]
                         pr = [pp[j] + v[j] * frame_time * vel_factor for j in range(3)]
                         pr[2] -= downward_offset
@@ -446,6 +535,8 @@ class AimbotRCS:
                             continue
                         if d < mind:
                             mind, target, pos, self.target_key = (d, p, pr, pawn_addr)
+                            if self.left_down and int(time.time() * 2) % 10 == 0:
+                                print(f"[AimDebug] New Target: {hex(p)}, Dist: {math.sqrt(d):.1f}")
                 if self.target_key != self.prev_target_key:
                     stick_t = stickiness_time
                     if self.prev_target_key and now - getattr(self, 'stickiness_timer', 0) < stick_t and (self.prev_target_key in entity_cache):
