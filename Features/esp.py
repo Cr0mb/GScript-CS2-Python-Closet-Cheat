@@ -9,6 +9,7 @@ import time
 import os
 import struct
 import ctypes
+import zlib
 try:
     _user32 = ctypes.windll.user32
     _WDA_NONE = 0
@@ -807,6 +808,40 @@ def _get_gscript_maps_dir() -> str:
     return maps_dir
 
 
+def _resolve_map_file(maps_dir: str, map_name: str):
+    # vischeck.pyd only accepts the uncompressed .opt form. The repo ships
+    # zlib-compressed .opt.z files, so transparently decompress on first use
+    # and cache the result alongside the .z file.
+    candidates = [maps_dir]
+    appdata = os.environ.get('APPDATA')
+    if appdata:
+        candidates.append(os.path.join(appdata, 'GScript', 'maps'))
+
+    for d in candidates:
+        p = os.path.join(d, f'{map_name}.opt')
+        if os.path.isfile(p):
+            return os.path.abspath(p)
+
+    for d in candidates:
+        z = os.path.join(d, f'{map_name}.opt.z')
+        if not os.path.isfile(z):
+            continue
+        out = os.path.join(maps_dir, f'{map_name}.opt')
+        try:
+            os.makedirs(maps_dir, exist_ok=True)
+            with open(z, 'rb') as src:
+                blob = zlib.decompress(src.read())
+            with open(out, 'wb') as dst:
+                dst.write(blob)
+            return os.path.abspath(out)
+        except Exception as exc:
+            try:
+                _log.debug('ESP: failed to decompress %s: %r', z, exc)
+            except Exception:
+                pass
+    return None
+
+
 def auto_map_loader(handle, matchmaking_base, vis_checker_obj):
     global last_map_check_time, current_detected_map
 
@@ -835,19 +870,11 @@ def auto_map_loader(handle, matchmaking_base, vis_checker_obj):
         current_detected_map = detected_map
 
     if detected_map != loaded_map_name:
-        target_map_file = f"{detected_map}.opt"
         maps_dir = _get_gscript_maps_dir()
-        target_map_path = os.path.join(maps_dir, target_map_file)
-
-        if os.path.exists(target_map_path):
-            # Prefer absolute paths so downstream loaders don’t depend on cwd
-            target_map_path = os.path.abspath(target_map_path)
+        target_map_path = _resolve_map_file(maps_dir, detected_map)
+        if target_map_path:
             setattr(Config, "visibility_map_path", target_map_path)
             setattr(Config, "visibility_map_reload_needed", True)
-        else:
-            pass
-    else:
-        pass
         
 def check_player_visibility(local_pos, entity_pos, vis_checker_obj):
     """Cheap wrapper around vischeck with an optional per-frame budget.
